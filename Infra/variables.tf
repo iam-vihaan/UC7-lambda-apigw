@@ -26,7 +26,7 @@ variable "private_subnet_cidrs" {
 variable "availability_zones" {
   description = "List of availability zones"
   type        = list(string)
-  default     = ["ap-south-1a", "ap-south-1b", "ap-south-1c"]
+  default     = ["us-east-1a", "us-east-1b", "us-east-1c"]
 }
 
 variable "environment" {
@@ -103,7 +103,7 @@ variable "tags" {
 variable "aws_region" {
   description = "AWS region for all resources"
   type        = string
-  default     = "ap-south-1"
+  default     = "us-east-1"
 
 }
 
@@ -116,20 +116,6 @@ variable "lambda_architectures" {
 
 }
 
-
-
-# variable "lambda_create_api_gateway_permission" {
-#   description = "Whether to create API Gateway permission for Lambda function"
-#   type        = bool
-#   default     = false
-# }
-
-
-# variable "api_gateway_execution_arn" {
-#   description = "API Gateway execution ARN for Lambda permission"
-#   type        = string
-#   default     = ""
-# }
 
 variable "lambda_environment_variables" {
   description = "Environment variables for the Lambda function"

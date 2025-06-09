@@ -71,7 +71,7 @@ module "apigateway" {
   source                     = "./modules/apigw"
   api_name                   = "${var.service_name}-api"
   description                = "API Gateway for ${var.service_name}"
-  aws_region                 = "ap-south-1"
+  aws_region                 = "us-east-1"
   endpoint_type              = var.api_endpoint_type
   lambda_function_arn        = module.lambda.function_arn
   stage_name                 = var.api_stage_name
