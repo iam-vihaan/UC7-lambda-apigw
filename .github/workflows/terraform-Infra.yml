@@ -1,0 +1,177 @@
+name: Deploy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      image_tag:
+        description: 'Docker image tag (leave empty for auto-generated)'
+        required: false
+        default: ''
+        type: string
+      skip_build:
+        description: 'Skip Docker build (use existing image)'
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+
+env:
+  AWS_REGION: ap-south-1
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+defaults:
+  run:
+    working-directory: ./Infra
+
+jobs:
+  build_push_update_lambda:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">=1.12.0"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Select or Create Terraform Workspace
+        run: |
+          ENV=${{ github.event.inputs.environment || 'prod' }}
+          if ! terraform workspace list | grep -w "$ENV"; then
+            terraform workspace new "$ENV"
+          fi
+          terraform workspace select "$ENV"
+
+      - name: Terraform Output ECR URL
+        id: ecr
+        run: echo "ECR_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+
+      - name: Docker Build & Push
+        working-directory: ./
+        run: |
+          aws ecr get-login-password | docker login --username AWS --password-stdin ${{ steps.ecr.outputs.ECR_URL }}
+          docker build -t ${{ steps.ecr.outputs.ECR_URL }}:${{ github.event.inputs.image_tag || 'latest' }} .
+          docker push ${{ steps.ecr.outputs.ECR_URL }}:${{ github.event.inputs.image_tag || 'latest' }}
+
+
+
+      - name: Update Lambda Image if Function Exists
+        shell: bash
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          IMAGE_TAG="${{ github.event.inputs.image_tag || 'latest' }}"
+          FUNCTION_NAME="demo-lambda-appgw-${ENVIRONMENT}"
+          IMAGE_URI="${{ steps.ecr.outputs.ECR_URL }}:${IMAGE_TAG}"
+      
+          echo "Checking if Lambda function '$FUNCTION_NAME' exists..."
+      
+          if aws lambda get-function --function-name "$FUNCTION_NAME" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
+            echo "Function exists. Updating image..."
+            aws lambda update-function-code \
+              --function-name "$FUNCTION_NAME" \
+              --image-uri "$IMAGE_URI" \
+              --region "${{ env.AWS_REGION }}"
+          else
+            echo "Function '$FUNCTION_NAME' does not exist. Skipping update."
+          fi
+        env:
+          AWS_REGION: ap-south-1
+      
+      
+    outputs:
+      image_tag: ${{ github.event.inputs.image_tag || 'latest' }}
+      image_uri: ${{ steps.ecr.outputs.ECR_URL }}:${{ github.event.inputs.image_tag || 'latest' }}
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: [build_push_update_lambda]
+    if: always() && (needs.build_push_update_lambda.result == 'success' || github.event.inputs.skip_build == 'true')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">=1.12.0"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Select or Create Terraform Workspace
+        run: |
+          ENV=${{ github.event.inputs.environment }}
+          if ! terraform workspace list | grep -w "$ENV"; then
+            terraform workspace new "$ENV"
+          fi
+          terraform workspace select "$ENV"
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -var-file="../environments/${{ github.event.inputs.environment }}/${{ github.event.inputs.environment }}.tfvars" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="image_tag=${{ needs.build_push_update_lambda.outputs.image_tag }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        if: github.event_name != 'pull_request'
+        run: terraform apply tfplan
+
+      - name: Get Deployment Outputs
+        id: outputs
+        run: |
+          echo "api_url=$(terraform output -raw api_gateway_url 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "function_url=$(terraform output -raw lambda_function_url 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "lambda_arn=$(terraform output -raw lambda_function_arn 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+
+    outputs:
+      api_url: ${{ steps.outputs.outputs.base_url }}
+      lambda_arn: ${{ steps.outputs.outputs.function_arn }}
+      image_tag: ${{ needs.build_push_update_lambda.outputs.image_tag }}
+      image_uri: ${{ needs.build_push_update_lambda.outputs.image_uri }}
