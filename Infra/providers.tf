@@ -8,8 +8,8 @@ terraform {
   }
 
   backend "s3" {
-    bucket       = "uc7-bucket-lambda"
-    key          = "uc7-bucket-lambda/terraform.tfstate"
+    bucket       = "uc7-bucket-lambdaa"
+    key          = "uc7-bucket-lambdaa/terraform.tfstate"
     region       = "us-east-1"
     encrypt      = true
     use_lockfile = true # New approach for state locking
