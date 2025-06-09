@@ -8,8 +8,8 @@ terraform {
   }
 
   backend "s3" {
-    bucket       = "demo-usecases-bucket-new"
-    key          = "usecase-07/workspace/terraform.tfstate"
+    bucket       = "uc7-bucket-lambda"
+    key          = "uc7-bucket-lambda/terraform.tfstate"
     region       = "us-east-1"
     encrypt      = true
     use_lockfile = true # New approach for state locking
